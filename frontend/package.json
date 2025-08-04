@@ -1,0 +1,21 @@
+{
+  "name": "crypto-frontend",
+  "version": "1.0.0",
+  "description": "Django + Vue Crypto Dashboard",
+  "main": "index.js",
+  "scripts": {
+    "serve": "vue-cli-service serve",
+    "build": "vue-cli-service build",
+    "lint": "vue-cli-service lint"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
+  },
+  "devDependencies": {
+    "@vue/cli-service": "^5.0.8",
+    "@vue/compiler-sfc": "^3.4.0"
+  },
+  "private": true
+}

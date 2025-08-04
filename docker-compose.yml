@@ -1,32 +1,4 @@
-version: '3.8'
-
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: crypto_db
-    environment:
-      POSTGRES_DB: crypto_db
-      POSTGRES_USER: crypto_user
-      POSTGRES_PASSWORD: crypto_password
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./backend/db_init:/docker-entrypoint-initdb.d/:ro
-    ports:
-      - "5432:5432"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crypto_user -d crypto_db"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: crypto_redis
-    ports:
-      - "6379:6379"
-
   backend:
     build: ./backend
     container_name: crypto_backend
@@ -39,19 +11,28 @@ services:
       - ./backend:/app
     ports:
       - "8000:8000"
+    extra_hosts:  # ← Добавь это для Linux
+      - "host.docker.internal:host-gateway"
     environment:
-      - DB_HOST=postgres
+      - DB_HOST=host.docker.internal
       - DB_PORT=5432
       - DB_NAME=crypto_db
       - DB_USER=crypto_user
       - DB_PASSWORD=crypto_password
       - CELERY_BROKER_URL=redis://redis:6379/0
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
+      - redis
     restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: crypto_redis
+    ports:
+      - "6379:6379"
+
+  # ❌ Убери блок postgres — он уже запущен
+  # postgres:
+  #   ...
 
   frontend:
     build: ./frontend
@@ -60,7 +41,3 @@ services:
       - "8080:80"
     depends_on:
       - backend
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
