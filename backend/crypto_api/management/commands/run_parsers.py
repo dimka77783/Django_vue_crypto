@@ -7,7 +7,7 @@ from crypto_api.parsers.tokenomics import main as run_tokenomics
 
 
 class Command(BaseCommand):
-    help = 'Запускает все парсеры: upcoming → investors → launchpads → tokenomics'
+    help = 'Запускает все парсеры: upcoming → investors → launchpads.py → tokenomics'
 
     def handle(self, *args, **options):
         self.stdout.write("🚀 ЗАПУСК ПОЛНОГО ПАЙПЛАЙНА\n" + "=" * 60)

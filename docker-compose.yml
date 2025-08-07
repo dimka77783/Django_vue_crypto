@@ -1,39 +1,109 @@
-services:
-  backend:
-    build: ./backend
-    container_name: crypto_backend
-    command: >
-      sh -c "celery -A config worker -l INFO &
-             celery -A config beat -l INFO &
-             python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
-    volumes:
-      - ./backend:/app
-    ports:
-      - "8000:8000"
-    extra_hosts:  # ← Добавь это для Linux
-      - "host.docker.internal:host-gateway"
-    environment:
-      - DB_HOST=host.docker.internal
-      - DB_PORT=5432
-      - DB_NAME=crypto_db
-      - DB_USER=crypto_user
-      - DB_PASSWORD=crypto_password
-      - CELERY_BROKER_URL=redis://redis:6379/0
-    depends_on:
-      - redis
-    restart: unless-stopped
+version: '3.8'
 
+services:
+  # === PostgreSQL: База данных ===
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: crypto_db
+      POSTGRES_USER: crypto_user
+      POSTGRES_PASSWORD: crypto_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db_init:/docker-entrypoint-initdb.d/:ro
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crypto_user -d crypto_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # === Redis: Брокер для Celery ===
   redis:
     image: redis:7-alpine
     container_name: crypto_redis
     ports:
       - "6379:6379"
+    restart: unless-stopped
 
-  # ❌ Убери блок postgres — он уже запущен
-  # postgres:
-  #   ...
+  # === Django Backend ===
+  backend:
+    build: ./backend
+    container_name: crypto_backend
+    command: >
+      sh -c "
+      celery -A config worker -l INFO &
+      celery -A config beat -l INFO &
+      python manage.py migrate &&
+      python manage.py runserver 0.0.0.0:8000
+      "
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=crypto_db
+      - DB_USER=crypto_user
+      - DB_PASSWORD=crypto_password
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - DJANGO_SETTINGS_MODULE=config.settings
+      # 🔥 КЛЮЧЕВАЯ ПЕРЕМЕННАЯ:
+      - SELENIUM_CACHE_PATH=/tmp/selenium
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
 
+  # === Celery Worker ===
+  celery_worker:
+    build: ./backend
+    command: celery -A config worker -l INFO
+    volumes:
+      - ./backend:/app
+      - selenium_cache:/app/.cache/selenium
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=crypto_db
+      - DB_USER=crypto_user
+      - DB_PASSWORD=crypto_password
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - SELENIUM_CACHE_PATH=/tmp/selenium
+      - DJANGO_SETTINGS_MODULE=config.settings
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # === Celery Beat ===
+  celery_beat:
+    build: ./backend
+    command: celery -A config beat -l INFO
+    volumes:
+      - ./backend:/app
+      - selenium_cache:/app/.cache/selenium
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=crypto_db
+      - DB_USER=crypto_user
+      - DB_PASSWORD=crypto_password
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - SELENIUM_CACHE_PATH=/app/.cache/selenium
+      - DJANGO_SETTINGS_MODULE=config.settings
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # === Vue.js Frontend (Nginx) ===
   frontend:
     build: ./frontend
     container_name: crypto_frontend
@@ -41,3 +111,9 @@ services:
       - "8080:80"
     depends_on:
       - backend
+    restart: unless-stopped
+
+# === Docker Volumes ===
+volumes:
+  postgres_data:
+  selenium_cache:  # ✅ Исправлено: добавлен volume для Selenium
