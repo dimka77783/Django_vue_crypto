@@ -1,9 +1,11 @@
+# docker-compose.yml
 version: '3.8'
 
 services:
-  # === PostgreSQL: База данных ===
+  # === PostgreSQL (теперь в docker-compose) ===
   postgres:
     image: postgres:15-alpine
+    container_name: crypto_db
     environment:
       POSTGRES_DB: crypto_db
       POSTGRES_USER: crypto_user
@@ -13,7 +15,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/db_init:/docker-entrypoint-initdb.d/:ro
     ports:
-      - "5433:5432"
+      - "5432:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U crypto_user -d crypto_db"]
@@ -21,7 +23,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # === Redis: Брокер для Celery ===
+  # === Redis ===
   redis:
     image: redis:7-alpine
     container_name: crypto_redis
@@ -51,9 +53,7 @@ services:
       - DB_USER=crypto_user
       - DB_PASSWORD=crypto_password
       - CELERY_BROKER_URL=redis://redis:6379/0
-      - DJANGO_SETTINGS_MODULE=config.settings
-      # 🔥 КЛЮЧЕВАЯ ПЕРЕМЕННАЯ:
-      - SELENIUM_CACHE_PATH=/tmp/selenium
+      - WEBDRIVER_CACHE_DIR=/app/.cache/selenium
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,7 +67,6 @@ services:
     command: celery -A config worker -l INFO
     volumes:
       - ./backend:/app
-      - selenium_cache:/app/.cache/selenium
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -75,11 +74,8 @@ services:
       - DB_USER=crypto_user
       - DB_PASSWORD=crypto_password
       - CELERY_BROKER_URL=redis://redis:6379/0
-      - SELENIUM_CACHE_PATH=/tmp/selenium
-      - DJANGO_SETTINGS_MODULE=config.settings
     depends_on:
-      backend:
-        condition: service_started
+      - redis
     restart: unless-stopped
 
   # === Celery Beat ===
@@ -88,7 +84,6 @@ services:
     command: celery -A config beat -l INFO
     volumes:
       - ./backend:/app
-      - selenium_cache:/app/.cache/selenium
     environment:
       - DB_HOST=postgres
       - DB_PORT=5432
@@ -96,14 +91,11 @@ services:
       - DB_USER=crypto_user
       - DB_PASSWORD=crypto_password
       - CELERY_BROKER_URL=redis://redis:6379/0
-      - SELENIUM_CACHE_PATH=/app/.cache/selenium
-      - DJANGO_SETTINGS_MODULE=config.settings
     depends_on:
-      backend:
-        condition: service_started
+      - redis
     restart: unless-stopped
 
-  # === Vue.js Frontend (Nginx) ===
+  # === Frontend ===
   frontend:
     build: ./frontend
     container_name: crypto_frontend
@@ -113,7 +105,6 @@ services:
       - backend
     restart: unless-stopped
 
-# === Docker Volumes ===
+# === Volumes ===
 volumes:
   postgres_data:
-  selenium_cache:  # ✅ Исправлено: добавлен volume для Selenium

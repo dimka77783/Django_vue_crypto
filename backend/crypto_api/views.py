@@ -4,17 +4,22 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.http import HttpResponse
 from django.core import management
-from django.conf import settings
+import threading
 import json
 import psycopg2
+from django.conf import settings
+import psycopg2.extras  # Для RealDictCursor
+import re
+
+# ✅ ОБЯЗАТЕЛЬНЫЕ ИМПОРТЫ
 from .models import UpcomingCrypto
 from .serializers import UpcomingCryptoSerializer
 
-# --- Модели и сериализаторы ---
+
+# --- 1. Список и детали монет ---
 class CryptoListAPIView(generics.ListAPIView):
     """
-    Список всех upcoming-проектов
-    GET /api/coins/
+    GET /api/coins/ — список всех монет
     """
     queryset = UpcomingCrypto.objects.all()
     serializer_class = UpcomingCryptoSerializer
@@ -22,23 +27,24 @@ class CryptoListAPIView(generics.ListAPIView):
 
 class CryptoDetailAPIView(generics.RetrieveAPIView):
     """
-    Детали одного проекта
-    GET /api/coins/<id>/
+    GET /api/coins/<id>/ — детали одной монеты
     """
     queryset = UpcomingCrypto.objects.all()
     serializer_class = UpcomingCryptoSerializer
 
 
-# --- Запуск парсинга ---
+# --- 2. Запуск парсинга ---
 @api_view(['POST'])
 def trigger_parsing(request):
     """
-    Запускает полный парсинг через Celery
-    POST /api/trigger-parsing/
+    POST /api/trigger-parsing/ — запускает run_parsers
     """
     def run():
-        management.call_command('run_parsers')
-    import threading
+        try:
+            management.call_command('run_parsers')
+        except Exception as e:
+            print(f"❌ Ошибка при запуске парсинга: {e}")
+
     thread = threading.Thread(target=run)
     thread.start()
     return Response({
@@ -47,12 +53,10 @@ def trigger_parsing(request):
     })
 
 
-# --- Токеномика (из вьюшки tokenomics_detailed) ---
-# --- Токеномика (из таблицы cryptorank_tokenomics) ---
-class TokenomicsDetailedView(generics.ListAPIView):
+# --- 3. Токеномика (из таблицы cryptorank_tokenomics) ---
+class TokenomicsDetailedView(generics.GenericAPIView):
     """
-    Получает данные из таблицы cryptorank_tokenomics
-    GET /api/tokenomics-detailed/
+    GET /api/tokenomics-detailed/ — все данные токеномики
     """
     def get(self, request, *args, **kwargs):
         try:
@@ -70,37 +74,56 @@ class TokenomicsDetailedView(generics.ListAPIView):
             rows = cursor.fetchall()
             conn.close()
 
-            # Формируем список, раскрывая JSONB поле `tokenomics`
+            # Формируем список: раскрываем JSONB поле `tokenomics`
             data = []
             for row in rows:
                 project_name, tokenomics_json = row
-                # Добавляем project_name внутрь данных токеномики
                 if isinstance(tokenomics_json, dict):
                     tokenomics_json['project_name'] = project_name
                     data.append(tokenomics_json)
                 else:
-                    data.append({
-                        'project_name': project_name,
-                        'error': 'Invalid tokenomics data',
-                        'raw': tokenomics_json
-                    })
+                    # Если данные не в JSON, попробуем распарсить
+                    try:
+                        parsed = json.loads(tokenomics_json)
+                        parsed['project_name'] = project_name
+                        data.append(parsed)
+                    except:
+                        data.append({
+                            'project_name': project_name,
+                            'error': 'Invalid tokenomics data',
+                            'raw': str(tokenomics_json)
+                        })
 
             return Response(data)
 
         except Exception as e:
-            return Response({"error": f"Database error: {str(e)}"}, status=500)
+            return Response({
+                "error": f"Database error: {str(e)}"
+            }, status=500)
 
 
-# --- OHLC данные по символу ---
+# --- 4. OHLC данные по символу ---
+def normalize_symbol(symbol):
+    """Преобразует символ в формат имени таблицы"""
+    # Убираем всё, кроме букв и цифр, заменяем пробелы и дефисы на _
+    normalized = re.sub(r'[^a-zA-Z0-9]+', '_', symbol.strip().lower())
+    # Убираем двойные подчёркивания и ведущие/конечные _
+    normalized = re.sub(r'_+', '_', normalized).strip('_')
+    return normalized
+
+
 class OHLCDataView(generics.GenericAPIView):
     """
-    Получает OHLC-данные по символу монеты
-    GET /api/ohlc/<symbol>/
+    GET /api/ohlc/<symbol>/ — исторические данные (Open, High, Low, Close и т.д.)
     Пример: /api/ohlc/pvt/
     """
     def get(self, request, symbol):
-        table_name = f"ohlc_{symbol.lower()}"
+        # Нормализуем символ
+        table_name = f"ohlc_{normalize_symbol(symbol)}"
+        print(f"🔍 Поиск таблицы: {table_name}")
+
         try:
+            # Подключаемся к БД
             conn = psycopg2.connect(
                 host=settings.DATABASES['default']['HOST'],
                 port=settings.DATABASES['default']['PORT'],
@@ -108,29 +131,60 @@ class OHLCDataView(generics.GenericAPIView):
                 user=settings.DATABASES['default']['USER'],
                 password=settings.DATABASES['default']['PASSWORD']
             )
-            cursor = conn.cursor()
+
+            # Используем RealDictCursor для получения словарей
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            # Проверяем, существует ли таблица (без учёта регистра)
+            cursor.execute("""
+                SELECT tablename FROM pg_tables 
+                WHERE schemaname='public' AND LOWER(tablename) = %s;
+            """, (table_name,))
+            table_check = cursor.fetchone()
+
+            if not table_check:
+                print(f"❌ Таблица {table_name} не найдена")
+                return Response([], status=200)
+
+            # Читаем данные из таблицы
             cursor.execute(f"""
                 SELECT 
                     date, open_price, high_price, low_price, med_price,
                     close_price, change_percent, volume_usd, change_volume_percent, market_cap
                 FROM {table_name}
-                ORDER BY date DESC;
+                ORDER BY date ASC;
             """)
             rows = cursor.fetchall()
-            columns = [desc[0] for desc in cursor.description]
-            data = [dict(zip(columns, row)) for row in rows]
             conn.close()
+
+            # Преобразуем результат в список словарей
+            data = []
+            for row in rows:
+                item = {}
+                for key, value in row.items():
+                    # Преобразуем Decimal, datetime и None в JSON-совместимые типы
+                    if isinstance(value, (int, float)):
+                        item[key] = float(value) if isinstance(value, float) else value
+                    elif isinstance(value, str):
+                        item[key] = value
+                    elif value is None:
+                        item[key] = None
+                    else:
+                        item[key] = str(value)  # Остальное — как строки
+                data.append(item)
+
+            print(f"✅ Успешно загружено {len(data)} строк из {table_name}")
             return Response(data)
-        except psycopg2.errors.UndefinedTable:
-            return Response([], status=200)
+
         except Exception as e:
+            print(f"❌ Ошибка при загрузке OHLC: {e}")
             return Response({"error": f"Database error: {str(e)}"}, status=500)
 
 
-# --- Корневой эндпоинт (опционально) ---
+# --- 5. Корневой эндпоинт (опционально) ---
 def api_root(request):
     """
-    Простая корневая страница API
+    GET /api/ — простая HTML-страница с ссылками
     """
     return HttpResponse("""
     <h1>🚀 Crypto Backend API</h1>
@@ -139,6 +193,6 @@ def api_root(request):
         <li><a href="/admin">Админка</a></li>
         <li><a href="/api/coins/">Список монет</a></li>
         <li><a href="/api/tokenomics-detailed/">Токеномика</a></li>
-        <li><a href="/api/trigger-parsing/" target="_blank">Запустить парсинг</a></li>
+        <li><a href="/api/trigger-parsing/" target="_blank">Запустить полный парсинг</a></li>
     </ul>
     """)
