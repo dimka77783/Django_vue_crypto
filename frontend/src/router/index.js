@@ -4,14 +4,14 @@ import { createRouter, createWebHistory } from 'vue-router'
 // Компоненты
 const CoinsList = () => import('../views/CoinsList.vue')
 const CoinDetail = () => import('../views/CoinDetail.vue')
+const AdminPanel = () => import('../views/AdminPanel.vue') // ✅ Добавлено
 
-// Роуты
 const routes = [
   { path: '/', component: CoinsList, name: 'CoinsList' },
-  { path: '/coin/:id', component: CoinDetail, name: 'CoinDetail' }
+  { path: '/coin/:id', component: CoinDetail, name: 'CoinDetail' },
+  { path: '/admin', component: AdminPanel, name: 'AdminPanel' } // ✅ Добавлено
 ]
 
-// Создание роутера
 const router = createRouter({
   history: createWebHistory(),
   routes
