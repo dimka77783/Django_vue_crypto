@@ -5,7 +5,6 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.http import HttpResponse
 from django.db import connection
-
 from .models import UpcomingCrypto
 from .serializers import UpcomingCryptoSerializer
 from .tasks import run_full_parsing_pipeline
@@ -22,16 +21,18 @@ class CryptoListAPIView(generics.ListAPIView):
 
 # --- API: Детали монеты ---
 class CryptoDetailAPIView(generics.RetrieveAPIView):
+    """
+    Возвращает детали монеты по ID, включая токеномику из отдельной таблицы
+    """
     queryset = UpcomingCrypto.objects.all()
     serializer_class = UpcomingCryptoSerializer
     lookup_field = 'id'
 
     def retrieve(self, request, *args, **kwargs):
-        # Получаем объект из cryptorank_upcoming
         instance = self.get_object()
-        data = self.get_serializer(instance).data  # Сериализуем
+        data = self.get_serializer(instance).data
 
-        # Добавляем токеномику из cryptorank_tokenomics
+        # Добавляем токеномику из таблицы cryptorank_tokenomics
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT tokenomics FROM cryptorank_tokenomics WHERE project_name = %s",
@@ -39,7 +40,15 @@ class CryptoDetailAPIView(generics.RetrieveAPIView):
             )
             row = cursor.fetchone()
             if row:
-                data['tokenomics'] = row[0]  # Добавляем в ответ
+                # Если tokenomics строка — парсим
+                tokenomics_data = row[0]
+                if isinstance(tokenomics_data, str):
+                    import json
+                    try:
+                        tokenomics_data = json.loads(tokenomics_data)
+                    except:
+                        tokenomics_data = None
+                data['tokenomics'] = tokenomics_data
             else:
                 data['tokenomics'] = None
 
@@ -51,6 +60,7 @@ class TokenomicsDetailedView(generics.ListAPIView):
     """
     Возвращает данные из вьюшки tokenomics_detailed
     """
+
     def get_queryset(self):
         with connection.cursor() as cursor:
             cursor.execute("SELECT * FROM tokenomics_detailed")
@@ -61,20 +71,53 @@ class TokenomicsDetailedView(generics.ListAPIView):
         return Response(self.get_queryset())
 
 
-# --- API: OHLC (заглушка) ---
+# --- API: OHLC (чтение из ohlc_<symbol>) ---
 class OHLCDataView(generics.GenericAPIView):
     """
-    Возвращает OHLC-данные (заглушка)
+    Возвращает OHLC-данные из таблицы ohlc_<symbol>
+    Использует колонку `date`, а не `timestamp`
     """
+
     def get(self, request, symbol):
-        data = {
-            "symbol": symbol,
-            "data": [
-                {"time": "2025-08-01", "open": 1.0, "high": 1.1, "low": 0.9, "close": 1.05},
-                {"time": "2025-08-02", "open": 1.05, "high": 1.2, "low": 1.0, "close": 1.15},
-            ]
-        }
-        return Response(data)
+        symbol_lower = symbol.strip().lower()
+        table_name = f"ohlc_{symbol_lower}"
+
+        with connection.cursor() as cursor:
+            # Проверяем, существует ли таблица
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = %s
+                );
+            """, [table_name])
+
+            if not cursor.fetchone()[0]:
+                return Response({
+                    "symbol": symbol.upper(),
+                    "data": []
+                })
+
+            # Читаем данные, конвертируя date в строку
+            cursor.execute(f"""
+                SELECT 
+                    date::text as date,
+                    open_price,
+                    high_price,
+                    low_price,
+                    close_price,
+                    volume_usd as volume
+                FROM {table_name}
+                ORDER BY date ASC
+            """)
+
+            columns = [col[0] for col in cursor.description]
+            rows = cursor.fetchall()
+            data = [dict(zip(columns, row)) for row in rows]
+
+        return Response({
+            "symbol": symbol.upper(),
+            "data": data
+        })
 
 
 # --- API: Запуск парсинга ---
