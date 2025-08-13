@@ -65,6 +65,8 @@
               <th>Минимум</th>
               <th>Закрытие</th>
               <th>Объём (USD)</th>
+              <th>Изменение (%)</th>
+              <th>Market Cap</th>
             </tr>
           </thead>
           <tbody>
@@ -75,6 +77,8 @@
               <td>{{ point.low_price }}</td>
               <td>{{ point.close_price }}</td>
               <td>{{ point.volume_usd }}</td>
+              <td>{{ point.change_percent }}</td>
+              <td>{{ point.market_cap }}</td>
             </tr>
           </tbody>
         </table>

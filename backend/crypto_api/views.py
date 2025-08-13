@@ -105,7 +105,9 @@ class OHLCDataView(generics.GenericAPIView):
                     high_price,
                     low_price,
                     close_price,
-                    volume_usd as volume
+                    volume_usd as volume,
+                    change_percent,
+                    market_cap
                 FROM {table_name}
                 ORDER BY date ASC
             """)
