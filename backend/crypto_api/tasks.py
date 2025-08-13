@@ -2,14 +2,18 @@
 from celery import shared_task
 from django.core.management import call_command
 
+
 @shared_task
 def run_full_parsing_pipeline():
     """
-    Запускает полный пайплайн парсинга:
-    - Upcoming
-    - Investors
-    - Launchpads
-    - Tokenomics
+    Celery задача для запуска полного парсинга
+    Вызывается как из API, так и по расписанию
     """
-    call_command('run_parsers')
-    return "✅ Парсинг завершён"
+    print("🚀 ЗАПУСК ПАЙПЛАЙНА ЧЕРЕЗ CELERY")
+    try:
+        call_command('run_parsers')
+        print("✅ Пайплайн завершён")
+        return "Parsing completed"
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        return f"Error: {str(e)}"

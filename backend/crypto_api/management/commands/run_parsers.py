@@ -4,13 +4,14 @@ from crypto_api.parsers.upcoming import main as run_upcoming
 from crypto_api.parsers.investors import main as run_investors
 from crypto_api.parsers.launchpads import main as run_launchpads
 from crypto_api.parsers.tokenomics import main as run_tokenomics
-from crypto_api.parsers.historical_parser import main as run_historical  # ← НОВАЯ СТРОКА
+
 
 class Command(BaseCommand):
-    help = 'Запускает все парсеры: upcoming → investors → launchpads → tokenomics → historical'
+    help = 'Запускает все парсеры: upcoming → investors → launchpads → tokenomics'
 
     def handle(self, *args, **options):
         self.stdout.write("🚀 ЗАПУСК ПОЛНОГО ПАЙПЛАЙНА\n" + "=" * 60)
+        self.stdout.write(f"Время: {self.style.NOTICE(self.get_time())}")
 
         self.stdout.write("\n1️⃣ Парсинг upcoming-проектов...")
         try:
@@ -40,11 +41,8 @@ class Command(BaseCommand):
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"❌ Ошибка: {e}"))
 
-        self.stdout.write("\n5️⃣ Парсинг исторических данных (OHLC)...")
-        try:
-            run_historical()
-            self.stdout.write(self.style.SUCCESS("✅ Исторические данные сохранены"))
-        except Exception as e:
-            self.stdout.write(self.style.ERROR(f"❌ Ошибка: {e}"))
-
         self.stdout.write("\n" + "✅ ПАЙПЛАЙН ЗАВЕРШЁН\n" + "=" * 60)
+
+    def get_time(self):
+        from datetime import datetime
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
