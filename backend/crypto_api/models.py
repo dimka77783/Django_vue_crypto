@@ -1,6 +1,7 @@
 from django.db import models
 
 class UpcomingCrypto(models.Model):
+    id = models.AutoField(primary_key=True)  # или просто оставь по умолчанию
     project_name = models.CharField(max_length=200)
     project_symbol = models.CharField(max_length=20)
     project_url = models.URLField()
